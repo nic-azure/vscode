@@ -1,0 +1,69 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+.acrolinx-config.edn
+.gitattributes
+.openpublishing.build.ps1
+.openpublishing.publish.config.json
+.openpublishing.redirection.json
+CONTRIBUTING.md
+docs/breadcrumb/fucking-algorithm/
+docs/breadcrumb/toc.yml
+docs/code-style-inference.md
+docs/custom-models.md
+docs/docfx.json
+docs/faq.md
+docs/index.md
+docs/intellicode-visual-studio-code.md
+docs/intellicode-visual-studio.md
+docs/media/add-model.png
+docs/media/add-shared-model.png
+docs/media/argument-completion.png
+docs/media/create-new-model.png
+docs/media/delete-model.png
+docs/media/enhanced-intellisense.png
+docs/media/intellicode-editorconfig.png
+docs/media/intellicode-options.png
+docs/media/model-training-directory.png
+docs/media/python-intellicode.gif
+docs/media/starred-intellisense-suggestions.png
+docs/media/vs-code-logo.svg
+docs/media/vs-ide-2017.svg
+docs/media/vs-ide-2019.svg
+docs/overview.md
+docs/share-models.md
+docs/toc.yml
+ISSUE_TEMPLATE.md
+LICENSE
+LICENSE-CODE
+README.md
+ThirdPartyNotices
