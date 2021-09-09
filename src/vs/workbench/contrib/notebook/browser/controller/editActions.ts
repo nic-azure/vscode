@@ -79,8 +79,7 @@ registerAction2(class EditCellAction extends NotebookCellAction {
 	}
 
 	async runWithContext(accessor: ServicesAccessor, context: INotebookCellActionContext): Promise<void> {
-		const viewModel = context.notebookEditor.viewModel;
-		if (!viewModel || viewModel.options.isReadOnly) {
+		if (!context.notebookEditor.hasModel() || context.notebookEditor.isReadOnly) {
 			return;
 		}
 
@@ -163,12 +162,11 @@ registerAction2(class DeleteCellAction extends NotebookCellAction {
 	}
 
 	async runWithContext(accessor: ServicesAccessor, context: INotebookCellActionContext) {
-		const viewModel = context.notebookEditor.viewModel;
-		if (!viewModel || viewModel.options.isReadOnly) {
+		if (!context.notebookEditor.hasModel() || context.notebookEditor.isReadOnly) {
 			return;
 		}
 
-		runDeleteAction(viewModel, context.cell);
+		runDeleteAction(context.notebookEditor, context.cell);
 	}
 });
 
@@ -348,14 +346,14 @@ registerAction2(class ChangeCellLanguageAction extends NotebookCellAction<ICellR
 		const language = additionalArgs.length && typeof additionalArgs[0] === 'string' ? additionalArgs[0] : undefined;
 		const activeEditorContext = this.getEditorContextFromArgsOrActive(accessor);
 
-		if (!activeEditorContext || !activeEditorContext.notebookEditor.viewModel || context.start >= activeEditorContext.notebookEditor.viewModel.length) {
+		if (!activeEditorContext || !activeEditorContext.notebookEditor.hasModel() || context.start >= activeEditorContext.notebookEditor.getLength()) {
 			return;
 		}
 
 		// TODO@rebornix, support multiple cells
 		return {
 			notebookEditor: activeEditorContext.notebookEditor,
-			cell: activeEditorContext.notebookEditor.viewModel.cellAt(context.start)!,
+			cell: activeEditorContext.notebookEditor.cellAt(context.start)!,
 			language
 		};
 	}
@@ -440,9 +438,9 @@ registerAction2(class ChangeCellLanguageAction extends NotebookCellAction<ICellR
 
 	private async setLanguage(context: IChangeCellContext, languageId: string) {
 		if (languageId === 'markdown' && context.cell?.language !== 'markdown') {
-			const idx = context.notebookEditor.viewModel.getCellIndex(context.cell);
+			const idx = context.notebookEditor.getCellIndex(context.cell);
 			await changeCellToKind(CellKind.Markup, { cell: context.cell, notebookEditor: context.notebookEditor }, 'markdown', Mimes.markdown);
-			const newCell = context.notebookEditor.viewModel.cellAt(idx);
+			const newCell = context.notebookEditor.cellAt(idx);
 
 			if (newCell) {
 				context.notebookEditor.focusNotebookCell(newCell, 'editor');

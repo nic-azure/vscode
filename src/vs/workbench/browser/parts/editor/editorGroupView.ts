@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import 'vs/css!./media/editorgroupview';
-import { EditorGroupModel, IEditorOpenOptions, EditorCloseEvent, ISerializedEditorGroupModel, isSerializedEditorGroupModel } from 'vs/workbench/common/editor/editorGroupModel';
-import { GroupIdentifier, CloseDirection, IEditorCloseEvent, ActiveEditorDirtyContext, IEditorPane, EditorGroupEditorsCountContext, SaveReason, IEditorPartOptionsChangeEvent, EditorsOrder, IVisibleEditorPane, ActiveEditorStickyContext, ActiveEditorPinnedContext, EditorResourceAccessor, IEditorMoveEvent, EditorInputCapabilities, IEditorOpenEvent, IUntypedEditorInput, DEFAULT_EDITOR_ASSOCIATION, ActiveEditorGroupLockedContext } from 'vs/workbench/common/editor';
+import { EditorGroupModel, IEditorOpenOptions, EditorCloseEvent, ISerializedEditorGroupModel, isSerializedEditorGroupModel, SideBySideMatchingStrategy } from 'vs/workbench/common/editor/editorGroupModel';
+import { GroupIdentifier, CloseDirection, IEditorCloseEvent, ActiveEditorDirtyContext, IEditorPane, EditorGroupEditorsCountContext, SaveReason, IEditorPartOptionsChangeEvent, EditorsOrder, IVisibleEditorPane, ActiveEditorStickyContext, ActiveEditorPinnedContext, EditorResourceAccessor, IEditorMoveEvent, EditorInputCapabilities, IEditorOpenEvent, IUntypedEditorInput, DEFAULT_EDITOR_ASSOCIATION, ActiveEditorGroupLockedContext, IEditorInput } from 'vs/workbench/common/editor';
 import { EditorInput } from 'vs/workbench/common/editor/editorInput';
 import { SideBySideEditorInput } from 'vs/workbench/common/editor/sideBySideEditorInput';
 import { Event, Emitter, Relay } from 'vs/base/common/event';
@@ -33,7 +33,7 @@ import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { Promises, RunOnceWorker } from 'vs/base/common/async';
 import { EventType as TouchEventType, GestureEvent } from 'vs/base/browser/touch';
 import { TitleControl } from 'vs/workbench/browser/parts/editor/titleControl';
-import { IEditorGroupsAccessor, IEditorGroupView, getActiveTextEditorOptions, EditorServiceImpl, IEditorGroupTitleHeight, IInternalEditorOpenOptions, IInternalMoveCopyOptions, IInternalEditorCloseOptions, IInternalEditorTitleControlOptions } from 'vs/workbench/browser/parts/editor/editor';
+import { IEditorGroupsAccessor, IEditorGroupView, fillActiveEditorViewState, EditorServiceImpl, IEditorGroupTitleHeight, IInternalEditorOpenOptions, IInternalMoveCopyOptions, IInternalEditorCloseOptions, IInternalEditorTitleControlOptions } from 'vs/workbench/browser/parts/editor/editor';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
 import { IAction } from 'vs/base/common/actions';
@@ -487,7 +487,7 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 		// Determine editor options
 		let options: IEditorOptions;
 		if (from instanceof EditorGroupView) {
-			options = getActiveTextEditorOptions(from); // if we copy from another group, ensure to copy its active editor viewstate
+			options = fillActiveEditorViewState(from); // if we copy from another group, ensure to copy its active editor viewstate
 		} else {
 			options = Object.create(null);
 		}
@@ -576,7 +576,7 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 
 		// Handle event
 		const editor = event.editor;
-		const editorsToClose = [editor];
+		const editorsToClose: IEditorInput[] = [editor];
 
 		// Include both sides of side by side editors when being closed
 		if (editor instanceof SideBySideEditorInput) {
@@ -610,11 +610,11 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 		this._onDidGroupChange.fire({ kind: GroupChangeKind.EDITOR_CLOSE, editor, editorIndex: event.index });
 	}
 
-	private canDispose(editor: EditorInput): boolean {
+	private canDispose(editor: IEditorInput): boolean {
 		for (const groupView of this.accessor.groups) {
 			if (groupView instanceof EditorGroupView && groupView.model.contains(editor, {
-				strictEquals: true,		// only if this input is not shared across editor groups
-				supportSideBySide: true // include side by side editor primary & secondary
+				strictEquals: true,										// only if this input is not shared across editor groups
+				supportSideBySide: SideBySideMatchingStrategy.ANY_SIDE 	// include any side of an opened side by side editor
 			})) {
 				return false;
 			}
@@ -1031,19 +1031,19 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 			let lock = false;
 
 			// By `typeId`
-			if (this.accessor.partOptions.experimentalAutoLockGroups?.has(editor.typeId)) {
+			if (this.accessor.partOptions.experimentalAutoLockGroups?.has(openedEditor.typeId)) {
 				lock = true;
 			}
 
 			// By `editorId`
-			else if (editor.editorId && this.accessor.partOptions.experimentalAutoLockGroups?.has(editor.editorId)) {
+			else if (openedEditor.editorId && this.accessor.partOptions.experimentalAutoLockGroups?.has(openedEditor.editorId)) {
 				lock = true;
 			}
 
 			// By `viewType` (TODO@bpasero remove this hack once editors have adopted `editorId`)
 			// See https://github.com/microsoft/vscode/issues/131692
 			else {
-				const editorViewType = (editor as { viewType?: string }).viewType;
+				const editorViewType = (openedEditor as { viewType?: string }).viewType;
 				if (editorViewType && this.accessor.partOptions.experimentalAutoLockGroups?.has(editorViewType)) {
 					lock = true;
 				}
@@ -1307,7 +1307,7 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
 		// When moving/copying an editor, try to preserve as much view state as possible
 		// by checking for the editor to be a text editor and creating the options accordingly
 		// if so
-		const options = getActiveTextEditorOptions(this, editor, {
+		const options = fillActiveEditorViewState(this, editor, {
 			...openOptions,
 			pinned: true, 										// always pin moved editor
 			sticky: !keepCopy && this.model.isSticky(editor)	// preserve sticky state only if editor is moved (https://github.com/microsoft/vscode/issues/99035)

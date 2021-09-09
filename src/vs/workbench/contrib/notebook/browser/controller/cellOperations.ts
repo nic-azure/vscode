@@ -4,22 +4,24 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IBulkEditService, ResourceEdit, ResourceTextEdit } from 'vs/editor/browser/services/bulkEditService';
+import { IPosition, Position } from 'vs/editor/common/core/position';
 import { Range } from 'vs/editor/common/core/range';
+import { EndOfLinePreference, IReadonlyTextBuffer } from 'vs/editor/common/model';
 import { ResourceNotebookCellEdit } from 'vs/workbench/contrib/bulkEdit/browser/bulkCellEdits';
 import { INotebookActionContext, INotebookCellActionContext } from 'vs/workbench/contrib/notebook/browser/controller/coreActions';
-import { CellEditState, CellFocusMode, expandCellRangesWithHiddenCells, ICellViewModel } from 'vs/workbench/contrib/notebook/browser/notebookBrowser';
-import { CellViewModel, NotebookViewModel } from 'vs/workbench/contrib/notebook/browser/viewModel/notebookViewModel';
+import { CellEditState, CellFocusMode, expandCellRangesWithHiddenCells, IActiveNotebookEditor, ICellViewModel } from 'vs/workbench/contrib/notebook/browser/notebookBrowser';
+import { CellViewModel } from 'vs/workbench/contrib/notebook/browser/viewModel/notebookViewModel';
 import { cloneNotebookCellTextModel } from 'vs/workbench/contrib/notebook/common/model/notebookCellTextModel';
 import { CellEditType, CellKind, ICellEditOperation, ICellReplaceEdit, SelectionStateType } from 'vs/workbench/contrib/notebook/common/notebookCommon';
 import { cellRangeContains, cellRangesToIndexes, ICellRange } from 'vs/workbench/contrib/notebook/common/notebookRange';
 
 export async function changeCellToKind(kind: CellKind, context: INotebookActionContext, language?: string, mime?: string): Promise<void> {
 	const { notebookEditor } = context;
-	if (!notebookEditor.viewModel) {
+	if (!notebookEditor.hasModel()) {
 		return;
 	}
 
-	if (notebookEditor.viewModel.options.isReadOnly) {
+	if (notebookEditor.isReadOnly) {
 		return;
 	}
 
@@ -32,7 +34,7 @@ export async function changeCellToKind(kind: CellKind, context: INotebookActionC
 		}
 
 		const text = cell.getText();
-		const idx = notebookEditor.viewModel.getCellIndex(cell);
+		const idx = notebookEditor.getCellIndex(cell);
 
 		if (language === undefined) {
 			const availableLanguages = notebookEditor.activeKernel?.supportedLanguages ?? [];
@@ -64,7 +66,7 @@ export async function changeCellToKind(kind: CellKind, context: INotebookActionC
 				selections: notebookEditor.getSelections()
 			};
 		}, undefined, true);
-		const newCell = notebookEditor.viewModel.cellAt(idx);
+		const newCell = notebookEditor.cellAt(idx);
 
 		if (!newCell) {
 			return;
@@ -80,7 +82,7 @@ export async function changeCellToKind(kind: CellKind, context: INotebookActionC
 				return;
 			}
 			const text = cell.getText();
-			const idx = notebookEditor.viewModel.getCellIndex(cell);
+			const idx = notebookEditor.getCellIndex(cell);
 
 			if (language === undefined) {
 				const availableLanguages = notebookEditor.activeKernel?.supportedLanguages ?? [];
@@ -118,9 +120,10 @@ export async function changeCellToKind(kind: CellKind, context: INotebookActionC
 	}
 }
 
-export function runDeleteAction(viewModel: NotebookViewModel, cell: ICellViewModel) {
-	const selections = viewModel.getSelections();
-	const targetCellIndex = viewModel.getCellIndex(cell);
+export function runDeleteAction(editor: IActiveNotebookEditor, cell: ICellViewModel) {
+	const textModel = editor.textModel;
+	const selections = editor.getSelections();
+	const targetCellIndex = editor.getCellIndex(cell);
 	const containingSelection = selections.find(selection => selection.start <= targetCellIndex && targetCellIndex < selection.end);
 
 	if (containingSelection) {
@@ -128,15 +131,15 @@ export function runDeleteAction(viewModel: NotebookViewModel, cell: ICellViewMod
 			editType: CellEditType.Replace, index: selection.start, count: selection.end - selection.start, cells: []
 		}));
 
-		const nextCellAfterContainingSelection = viewModel.cellAt(containingSelection.end);
+		const nextCellAfterContainingSelection = editor.cellAt(containingSelection.end);
 
-		viewModel.notebookDocument.applyEdits(edits, true, { kind: SelectionStateType.Index, focus: viewModel.getFocus(), selections: viewModel.getSelections() }, () => {
+		textModel.applyEdits(edits, true, { kind: SelectionStateType.Index, focus: editor.getFocus(), selections: editor.getSelections() }, () => {
 			if (nextCellAfterContainingSelection) {
-				const cellIndex = viewModel.notebookDocument.cells.findIndex(cell => cell.handle === nextCellAfterContainingSelection.handle);
+				const cellIndex = textModel.cells.findIndex(cell => cell.handle === nextCellAfterContainingSelection.handle);
 				return { kind: SelectionStateType.Index, focus: { start: cellIndex, end: cellIndex + 1 }, selections: [{ start: cellIndex, end: cellIndex + 1 }] };
 			} else {
-				if (viewModel.notebookDocument.length) {
-					const lastCellIndex = viewModel.notebookDocument.length - 1;
+				if (textModel.length) {
+					const lastCellIndex = textModel.length - 1;
 					return { kind: SelectionStateType.Index, focus: { start: lastCellIndex, end: lastCellIndex + 1 }, selections: [{ start: lastCellIndex, end: lastCellIndex + 1 }] };
 
 				} else {
@@ -145,7 +148,7 @@ export function runDeleteAction(viewModel: NotebookViewModel, cell: ICellViewMod
 			}
 		}, undefined);
 	} else {
-		const focus = viewModel.getFocus();
+		const focus = editor.getFocus();
 		const edits: ICellReplaceEdit[] = [{
 			editType: CellEditType.Replace, index: targetCellIndex, count: 1, cells: []
 		}];
@@ -163,18 +166,18 @@ export function runDeleteAction(viewModel: NotebookViewModel, cell: ICellViewMod
 			}
 		}
 
-		if (viewModel.cellAt(focus.start) === cell) {
+		if (editor.cellAt(focus.start) === cell) {
 			// focus is the target, focus is also not part of any selection
-			const newFocus = focus.end === viewModel.length ? { start: focus.start - 1, end: focus.end - 1 } : focus;
+			const newFocus = focus.end === textModel.length ? { start: focus.start - 1, end: focus.end - 1 } : focus;
 
-			viewModel.notebookDocument.applyEdits(edits, true, { kind: SelectionStateType.Index, focus: viewModel.getFocus(), selections: viewModel.getSelections() }, () => ({
+			textModel.applyEdits(edits, true, { kind: SelectionStateType.Index, focus: editor.getFocus(), selections: editor.getSelections() }, () => ({
 				kind: SelectionStateType.Index, focus: newFocus, selections: finalSelections
 			}), undefined);
 		} else {
 			// users decide to delete a cell out of current focus/selection
 			const newFocus = focus.start > targetCellIndex ? { start: focus.start - 1, end: focus.end - 1 } : focus;
 
-			viewModel.notebookDocument.applyEdits(edits, true, { kind: SelectionStateType.Index, focus: viewModel.getFocus(), selections: viewModel.getSelections() }, () => ({
+			textModel.applyEdits(edits, true, { kind: SelectionStateType.Index, focus: editor.getFocus(), selections: editor.getSelections() }, () => ({
 				kind: SelectionStateType.Index, focus: newFocus, selections: finalSelections
 			}), undefined);
 		}
@@ -185,15 +188,15 @@ export async function moveCellRange(context: INotebookCellActionContext, directi
 	if (!context.notebookEditor.hasModel()) {
 		return;
 	}
-	const viewModel = context.notebookEditor.viewModel;
-	const textModel = context.notebookEditor.textModel;
+	const editor = context.notebookEditor;
+	const textModel = editor.textModel;
 
-	if (viewModel.options.isReadOnly) {
+	if (editor.isReadOnly) {
 		return;
 	}
 
-	const selections = context.notebookEditor.getSelections();
-	const modelRanges = expandCellRangesWithHiddenCells(context.notebookEditor, context.notebookEditor.viewModel!, selections);
+	const selections = editor.getSelections();
+	const modelRanges = expandCellRangesWithHiddenCells(editor, selections);
 	const range = modelRanges[0];
 	if (!range || range.start === range.end) {
 		return;
@@ -218,22 +221,22 @@ export async function moveCellRange(context: INotebookCellActionContext, directi
 			true,
 			{
 				kind: SelectionStateType.Index,
-				focus: viewModel.getFocus(),
-				selections: viewModel.getSelections()
+				focus: editor.getFocus(),
+				selections: editor.getSelections()
 			},
 			() => ({ kind: SelectionStateType.Index, focus: newFocus, selections: [finalSelection] }),
 			undefined
 		);
-		const focusRange = viewModel.getSelections()[0] ?? viewModel.getFocus();
-		context.notebookEditor.revealCellRangeInView(focusRange);
+		const focusRange = editor.getSelections()[0] ?? editor.getFocus();
+		editor.revealCellRangeInView(focusRange);
 	} else {
-		if (range.end >= viewModel.length) {
+		if (range.end >= textModel.length) {
 			return;
 		}
 
 		const indexBelow = range.end;
 		const finalSelection = { start: range.start + 1, end: range.end + 1 };
-		const focus = context.notebookEditor.getFocus();
+		const focus = editor.getFocus();
 		const newFocus = cellRangeContains(range, focus) ? { start: focus.start + 1, end: focus.end + 1 } : { start: range.start + 1, end: range.start + 2 };
 
 		textModel.applyEdits([
@@ -246,26 +249,27 @@ export async function moveCellRange(context: INotebookCellActionContext, directi
 			true,
 			{
 				kind: SelectionStateType.Index,
-				focus: viewModel.getFocus(),
-				selections: viewModel.getSelections()
+				focus: editor.getFocus(),
+				selections: editor.getSelections()
 			},
 			() => ({ kind: SelectionStateType.Index, focus: newFocus, selections: [finalSelection] }),
 			undefined
 		);
 
-		const focusRange = viewModel.getSelections()[0] ?? viewModel.getFocus();
-		context.notebookEditor.revealCellRangeInView(focusRange);
+		const focusRange = editor.getSelections()[0] ?? editor.getFocus();
+		editor.revealCellRangeInView(focusRange);
 	}
 }
 
 export async function copyCellRange(context: INotebookCellActionContext, direction: 'up' | 'down'): Promise<void> {
-	if (!context.notebookEditor.hasModel()) {
+	const editor = context.notebookEditor;
+	if (!editor.hasModel()) {
 		return;
 	}
-	const viewModel = context.notebookEditor.viewModel;
-	const textModel = context.notebookEditor.textModel;
 
-	if (viewModel.options.isReadOnly) {
+	const textModel = editor.textModel;
+
+	if (editor.isReadOnly) {
 		return;
 	}
 
@@ -273,11 +277,11 @@ export async function copyCellRange(context: INotebookCellActionContext, directi
 
 	if (context.ui) {
 		let targetCell = context.cell;
-		const targetCellIndex = viewModel.getCellIndex(targetCell);
+		const targetCellIndex = editor.getCellIndex(targetCell);
 		range = { start: targetCellIndex, end: targetCellIndex + 1 };
 	} else {
-		const selections = context.notebookEditor.getSelections();
-		const modelRanges = expandCellRangesWithHiddenCells(context.notebookEditor, context.notebookEditor.viewModel!, selections);
+		const selections = editor.getSelections();
+		const modelRanges = expandCellRangesWithHiddenCells(editor, selections);
 		range = modelRanges[0];
 	}
 
@@ -287,14 +291,14 @@ export async function copyCellRange(context: INotebookCellActionContext, directi
 
 	if (direction === 'up') {
 		// insert up, without changing focus and selections
-		const focus = viewModel.getFocus();
-		const selections = viewModel.getSelections();
+		const focus = editor.getFocus();
+		const selections = editor.getSelections();
 		textModel.applyEdits([
 			{
 				editType: CellEditType.Replace,
 				index: range.end,
 				count: 0,
-				cells: cellRangesToIndexes([range]).map(index => cloneNotebookCellTextModel(viewModel.cellAt(index)!.model))
+				cells: cellRangesToIndexes([range]).map(index => cloneNotebookCellTextModel(editor.cellAt(index)!.model))
 			}],
 			true,
 			{
@@ -307,9 +311,9 @@ export async function copyCellRange(context: INotebookCellActionContext, directi
 		);
 	} else {
 		// insert down, move selections
-		const focus = viewModel.getFocus();
-		const selections = viewModel.getSelections();
-		const newCells = cellRangesToIndexes([range]).map(index => cloneNotebookCellTextModel(viewModel.cellAt(index)!.model));
+		const focus = editor.getFocus();
+		const selections = editor.getSelections();
+		const newCells = cellRangesToIndexes([range]).map(index => cloneNotebookCellTextModel(editor.cellAt(index)!.model));
 		const countDelta = newCells.length;
 		const newFocus = context.ui ? focus : { start: focus.start + countDelta, end: focus.end + countDelta };
 		const newSelections = context.ui ? selections : [{ start: range.start + countDelta, end: range.end + countDelta }];
@@ -318,7 +322,7 @@ export async function copyCellRange(context: INotebookCellActionContext, directi
 				editType: CellEditType.Replace,
 				index: range.end,
 				count: 0,
-				cells: cellRangesToIndexes([range]).map(index => cloneNotebookCellTextModel(viewModel.cellAt(index)!.model))
+				cells: cellRangesToIndexes([range]).map(index => cloneNotebookCellTextModel(editor.cellAt(index)!.model))
 			}],
 			true,
 			{
@@ -330,17 +334,18 @@ export async function copyCellRange(context: INotebookCellActionContext, directi
 			undefined
 		);
 
-		const focusRange = viewModel.getSelections()[0] ?? viewModel.getFocus();
-		context.notebookEditor.revealCellRangeInView(focusRange);
+		const focusRange = editor.getSelections()[0] ?? editor.getFocus();
+		editor.revealCellRangeInView(focusRange);
 	}
 }
 
-export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICellRange, direction: 'above' | 'below', constraint?: CellKind): Promise<{ edits: ResourceEdit[], cell: ICellViewModel, endFocus: ICellRange, endSelections: ICellRange[]; } | null> {
-	if (!viewModel || viewModel.options.isReadOnly) {
+export async function joinNotebookCells(editor: IActiveNotebookEditor, range: ICellRange, direction: 'above' | 'below', constraint?: CellKind): Promise<{ edits: ResourceEdit[], cell: ICellViewModel, endFocus: ICellRange, endSelections: ICellRange[]; } | null> {
+	if (editor.isReadOnly) {
 		return null;
 	}
 
-	const cells = viewModel.getCells(range);
+	const textModel = editor.textModel;
+	const cells = editor.getCellsInRange(range);
 
 	if (!cells.length) {
 		return null;
@@ -350,7 +355,7 @@ export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICe
 		return null;
 	}
 
-	if (range.end === viewModel.length && direction === 'below') {
+	if (range.end === textModel.length && direction === 'below') {
 		return null;
 	}
 
@@ -363,7 +368,7 @@ export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICe
 	}
 
 	if (direction === 'above') {
-		const above = viewModel.cellAt(range.start - 1) as CellViewModel;
+		const above = editor.cellAt(range.start - 1) as CellViewModel;
 		if (constraint && above.cellKind !== constraint) {
 			return null;
 		}
@@ -375,7 +380,7 @@ export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICe
 		return {
 			edits: [
 				new ResourceTextEdit(above.uri, { range: new Range(aboveCellLineCount, aboveCellLastLineEndColumn + 1, aboveCellLineCount, aboveCellLastLineEndColumn + 1), text: insertContent }),
-				new ResourceNotebookCellEdit(viewModel.notebookDocument.uri,
+				new ResourceNotebookCellEdit(textModel.uri,
 					{
 						editType: CellEditType.Replace,
 						index: range.start,
@@ -389,7 +394,7 @@ export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICe
 			endSelections: [{ start: range.start - 1, end: range.start }]
 		};
 	} else {
-		const below = viewModel.cellAt(range.end) as CellViewModel;
+		const below = editor.cellAt(range.end) as CellViewModel;
 		if (constraint && below.cellKind !== constraint) {
 			return null;
 		}
@@ -404,7 +409,7 @@ export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICe
 		return {
 			edits: [
 				new ResourceTextEdit(cell.uri, { range: new Range(cellLineCount, cellLastLineEndColumn + 1, cellLineCount, cellLastLineEndColumn + 1), text: insertContent }),
-				new ResourceNotebookCellEdit(viewModel.notebookDocument.uri,
+				new ResourceNotebookCellEdit(textModel.uri,
 					{
 						editType: CellEditType.Replace,
 						index: range.start + 1,
@@ -421,7 +426,9 @@ export async function joinNotebookCells(viewModel: NotebookViewModel, range: ICe
 }
 
 export async function joinCellsWithSurrounds(bulkEditService: IBulkEditService, context: INotebookCellActionContext, direction: 'above' | 'below'): Promise<void> {
-	const viewModel = context.notebookEditor.viewModel;
+	const editor = context.notebookEditor;
+	const textModel = editor.textModel;
+	const viewModel = editor._getViewModel();
 	let ret: {
 		edits: ResourceEdit[];
 		cell: ICellViewModel;
@@ -431,8 +438,8 @@ export async function joinCellsWithSurrounds(bulkEditService: IBulkEditService, 
 
 	if (context.ui) {
 		const focusMode = context.cell.focusMode;
-		const cellIndex = viewModel.getCellIndex(context.cell);
-		ret = await joinNotebookCells(viewModel, { start: cellIndex, end: cellIndex + 1 }, direction);
+		const cellIndex = editor.getCellIndex(context.cell);
+		ret = await joinNotebookCells(editor, { start: cellIndex, end: cellIndex + 1 }, direction);
 		if (!ret) {
 			return;
 		}
@@ -443,18 +450,18 @@ export async function joinCellsWithSurrounds(bulkEditService: IBulkEditService, 
 		);
 		viewModel.updateSelectionsState({ kind: SelectionStateType.Index, focus: ret.endFocus, selections: ret.endSelections });
 		ret.cell.updateEditState(CellEditState.Editing, 'joinCellsWithSurrounds');
-		context.notebookEditor.revealCellRangeInView(viewModel.getFocus());
+		editor.revealCellRangeInView(editor.getFocus());
 		if (focusMode === CellFocusMode.Editor) {
 			ret.cell.focusMode = CellFocusMode.Editor;
 		}
 	} else {
-		const selections = viewModel.getSelections();
+		const selections = editor.getSelections();
 		if (!selections.length) {
 			return;
 		}
 
-		const focus = viewModel.getFocus();
-		const focusMode = viewModel.cellAt(focus.start)?.focusMode;
+		const focus = editor.getFocus();
+		const focusMode = editor.cellAt(focus.start)?.focusMode;
 
 		let edits: ResourceEdit[] = [];
 		let cell: ICellViewModel | null = null;
@@ -465,18 +472,18 @@ export async function joinCellsWithSurrounds(bulkEditService: IBulkEditService, 
 			const containFocus = cellRangeContains(selection, focus);
 
 			if (
-				selection.end >= viewModel.length && direction === 'below'
+				selection.end >= textModel.length && direction === 'below'
 				|| selection.start === 0 && direction === 'above'
 			) {
 				if (containFocus) {
-					cell = viewModel.cellAt(focus.start)!;
+					cell = editor.cellAt(focus.start)!;
 				}
 
-				cells.push(...viewModel.getCells(selection));
+				cells.push(...editor.getCellsInRange(selection));
 				continue;
 			}
 
-			const singleRet = await joinNotebookCells(viewModel, selection, direction);
+			const singleRet = await joinNotebookCells(editor, selection, direction);
 
 			if (!singleRet) {
 				return;
@@ -508,10 +515,64 @@ export async function joinCellsWithSurrounds(bulkEditService: IBulkEditService, 
 		});
 
 		viewModel.updateSelectionsState({ kind: SelectionStateType.Handle, primary: cell.handle, selections: cells.map(cell => cell.handle) });
-		context.notebookEditor.revealCellRangeInView(viewModel.getFocus());
-		const newFocusedCell = viewModel.cellAt(viewModel.getFocus().start);
+		editor.revealCellRangeInView(editor.getFocus());
+		const newFocusedCell = editor.cellAt(editor.getFocus().start);
 		if (focusMode === CellFocusMode.Editor && newFocusedCell) {
 			newFocusedCell.focusMode = CellFocusMode.Editor;
 		}
 	}
+}
+
+function _splitPointsToBoundaries(splitPoints: IPosition[], textBuffer: IReadonlyTextBuffer): IPosition[] | null {
+	const boundaries: IPosition[] = [];
+	const lineCnt = textBuffer.getLineCount();
+	const getLineLen = (lineNumber: number) => {
+		return textBuffer.getLineLength(lineNumber);
+	};
+
+	// split points need to be sorted
+	splitPoints = splitPoints.sort((l, r) => {
+		const lineDiff = l.lineNumber - r.lineNumber;
+		const columnDiff = l.column - r.column;
+		return lineDiff !== 0 ? lineDiff : columnDiff;
+	});
+
+	for (let sp of splitPoints) {
+		if (getLineLen(sp.lineNumber) + 1 === sp.column && sp.column !== 1 /** empty line */ && sp.lineNumber < lineCnt) {
+			sp = new Position(sp.lineNumber + 1, 1);
+		}
+		_pushIfAbsent(boundaries, sp);
+	}
+
+	if (boundaries.length === 0) {
+		return null;
+	}
+
+	// boundaries already sorted and not empty
+	const modelStart = new Position(1, 1);
+	const modelEnd = new Position(lineCnt, getLineLen(lineCnt) + 1);
+	return [modelStart, ...boundaries, modelEnd];
+}
+
+function _pushIfAbsent(positions: IPosition[], p: IPosition) {
+	const last = positions.length > 0 ? positions[positions.length - 1] : undefined;
+	if (!last || last.lineNumber !== p.lineNumber || last.column !== p.column) {
+		positions.push(p);
+	}
+}
+
+export function computeCellLinesContents(cell: ICellViewModel, splitPoints: IPosition[]): string[] | null {
+	const rangeBoundaries = _splitPointsToBoundaries(splitPoints, cell.textBuffer);
+	if (!rangeBoundaries) {
+		return null;
+	}
+	const newLineModels: string[] = [];
+	for (let i = 1; i < rangeBoundaries.length; i++) {
+		const start = rangeBoundaries[i - 1];
+		const end = rangeBoundaries[i];
+
+		newLineModels.push(cell.textBuffer.getValueInRange(new Range(start.lineNumber, start.column, end.lineNumber, end.column), EndOfLinePreference.TextDefined));
+	}
+
+	return newLineModels;
 }

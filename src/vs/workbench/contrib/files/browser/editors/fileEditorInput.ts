@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from 'vs/base/common/uri';
-import { IFileEditorInput, Verbosity, GroupIdentifier, IMoveResult, EditorInputCapabilities, IEditorDescriptor, IEditorPane, IEditorInput, IUntypedEditorInput, DEFAULT_EDITOR_ASSOCIATION } from 'vs/workbench/common/editor';
+import { IFileEditorInput, Verbosity, GroupIdentifier, IMoveResult, EditorInputCapabilities, IEditorDescriptor, IEditorPane, IEditorInput, IUntypedEditorInput, DEFAULT_EDITOR_ASSOCIATION, IUntypedFileEditorInput } from 'vs/workbench/common/editor';
 import { AbstractTextResourceEditorInput } from 'vs/workbench/common/editor/textResourceEditorInput';
-import { ITextEditorOptions, ITextResourceEditorInput } from 'vs/platform/editor/common/editor';
+import { ITextResourceEditorInput } from 'vs/platform/editor/common/editor';
 import { BinaryEditorModel } from 'vs/workbench/common/editor/binaryEditorModel';
 import { FileOperationError, FileOperationResult, FileSystemProviderCapabilities, IFileService } from 'vs/platform/files/common/files';
 import { ITextFileService, TextFileEditorModelState, TextFileResolveReason, TextFileOperationError, TextFileOperationResult, ITextFileEditorModel, EncodingMode } from 'vs/workbench/services/textfile/common/textfiles';
@@ -22,6 +22,7 @@ import { Event } from 'vs/base/common/event';
 import { Schemas } from 'vs/base/common/network';
 import { createTextBufferFactory } from 'vs/editor/common/model/textModel';
 import { IPathService } from 'vs/workbench/services/path/common/pathService';
+import { IEditorResolverService } from 'vs/workbench/services/editor/common/editorResolverService';
 
 const enum ForceOpenAs {
 	None,
@@ -43,7 +44,7 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 	}
 
 	override get capabilities(): EditorInputCapabilities {
-		let capabilities = EditorInputCapabilities.None;
+		let capabilities = EditorInputCapabilities.CanSplitInGroup;
 
 		if (this.model) {
 			if (this.model.isReadonly()) {
@@ -90,9 +91,10 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 		@IFileService fileService: IFileService,
 		@IFilesConfigurationService private readonly filesConfigurationService: IFilesConfigurationService,
 		@IEditorService editorService: IEditorService,
-		@IPathService private readonly pathService: IPathService
+		@IPathService private readonly pathService: IPathService,
+		@IEditorResolverService editorResolverService: IEditorResolverService
 	) {
-		super(resource, preferredResource, editorService, textFileService, labelService, fileService);
+		super(resource, preferredResource, editorService, textFileService, labelService, fileService, editorResolverService);
 
 		this.model = this.textFileService.files.get(resource);
 
@@ -158,8 +160,8 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 		}));
 	}
 
-	override getName(): string {
-		return this.preferredName || super.getName();
+	override getName(skipDecorate?: boolean): string {
+		return this.preferredName || super.getName(skipDecorate);
 	}
 
 	setPreferredName(name: string): void {
@@ -395,7 +397,7 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 	}
 
 	override toUntyped(options?: { preserveViewState: GroupIdentifier }): ITextResourceEditorInput {
-		const untypedInput: ITextResourceEditorInput & { options: ITextEditorOptions } = {
+		const untypedInput: IUntypedFileEditorInput = {
 			resource: this.preferredResource,
 			forceFile: true,
 			options: {
@@ -415,7 +417,10 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 				return undefined;
 			})();
 
-			untypedInput.options.viewState = this.getViewStateFor(options.preserveViewState);
+			untypedInput.options = {
+				...untypedInput.options,
+				viewState: this.getViewStateFor(options.preserveViewState)
+			};
 		}
 
 		return untypedInput;
